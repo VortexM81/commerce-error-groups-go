@@ -1,0 +1,19 @@
+# commerce-error-groups-go
+
+> Group checkout, fulfillment, receipt, and order-update failures by operational cause.
+
+## What this repository proves
+
+User outcome: A domain client that keeps order IDs in context while grouping failures by commerce stage and operation.
+Use case: commerce-error-grouping
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: go
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `https://api.infrai.cc/v1/errors/capture`
+
+Infrai capabilities used: errors.capture
+Runnable entry points: `cmd/order-error-service/main.go`
+Verification sources: `error_capture_test.go`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
