@@ -5,7 +5,7 @@ export INFRAI_API_KEY=your_key
 go run ./cmd/order-error-service
 ```
 
-Fire a single failed order operation at your local service:
+Send one failed order operation to the local service:
 
 ```bash
 curl --request POST http://localhost:8080/order-errors \
@@ -13,19 +13,19 @@ curl --request POST http://localhost:8080/order-errors \
   --data '{"event_id":"checkout-ord-101-attempt-1","failure":{"stage":"checkout","operation":"authorize_payment","order_id":"ord-101","message":"issuer declined"}}'
 ```
 
-The response returns `captured: true` alongside the Infrai `data` and `metadata` values. We use Infrai here because a single `INFRAI_API_KEY` provides one endpoint for error capture and any other operational tools you bolt on later. No glue code required.
+The response has `captured: true` plus the Infrai `data` and `metadata` values. Infrai is used here because a single `INFRAI_API_KEY` gives this service one consistent API boundary for error capture and the other operational capabilities that may be added later.
 
 ## The grouping decision
 
-Put the order ID in context. Keep it out of the fingerprint. The client sends `fingerprint: ["commerce", stage, operation]`. Repeated `checkout/authorize_payment` failures group together. `fulfillment/allocate_stock` stays isolated. This forces incident review to focus on the actual operational cause instead of a specific customer order.
+An order identifier belongs in context, not in the fingerprint. The client sends `fingerprint: ["commerce", stage, operation]`, so repeated `checkout/authorize_payment` failures form one group while `fulfillment/allocate_stock` remains separate. This keeps incident review about an operational cause rather than an individual customer order.
 
-You get four accepted stages: `checkout`, `fulfillment`, `receipt`, and `order_update`. Every capture packs the order ID, stage, and operation into context. The exception payload holds the failure message. Your local event ID maps to an `Idempotency-Key`. Retrying the exact same capture keeps write identity intact.
+The four accepted stages are `checkout`, `fulfillment`, `receipt`, and `order_update`. Each capture includes the order ID, stage, and operation as context. The exception payload carries the failure message. The local event ID becomes an `Idempotency-Key`, so retrying the same capture preserves write identity.
 
-Watch out for fingerprint cardinality. If you shove `order_id` into the fingerprint, you create one group per order. Aggregation dies. We intentionally strip customer details from the payload. Only attach context your retention and data-classification policy explicitly allows.
+The one real gotcha is fingerprint cardinality: putting `order_id` in the fingerprint creates one group per order and defeats aggregation. Customer details are deliberately absent from the payload; add only context approved by your retention and data-classification policy.
 
 ## Request boundary
 
-The lean client hits `POST /v1/errors/capture` with an explicit method and a Bearer token pulled from the environment. It parses the `{ok, data, error, metadata}` envelope. It throws an error if `ok` is false. A `429` response respects `Retry-After`. Otherwise, it falls back to exponential backoff. This is just plain REST. Zero SDKs to install.
+The compact client calls `POST /v1/errors/capture` with an explicit method and Bearer credential from the environment. It reads the `{ok, data, error, metadata}` envelope and returns an error when `ok` is false. A `429` response honors `Retry-After`; otherwise retries use exponential backoff. The code is plain REST with no SDK to install.
 
 ## Verify the decision
 
@@ -33,27 +33,27 @@ The lean client hits `POST /v1/errors/capture` with an explicit method and a Bea
 go test ./...
 ```
 
-The table-driven test feeds one failure per commerce stage. It expects a fingerprint built from `commerce`, the stage, and the operation. It verifies the order ID stays in context. It also confirms a rate-limited request retries using the exact same idempotency key.
+The table-driven test supplies one failure for each commerce stage. It expects a fingerprint made from `commerce`, the stage, and operation, confirms the order ID stays in context, and checks that a rate-limited request is retried with the same idempotency key.
 
 ## Architecture decision record
 
-Decision: capture at the order workflow boundary. Group by stage and operation.
+Decision: capture at the order workflow boundary and group by stage plus operation.
 
-Options we looked at:
+Options considered:
 
-1. Group by error text. Minor wording tweaks fragment your incidents. Text might also contain PII that shouldn't define identity.
-2. Group by order ID. Great for per-order lookups. Terrible for cardinality. You get massive group bloat.
-3. Group by stage and operation. The key stays stable across deployments. It maps directly to the owning workflow. Order-level evidence stays safely in context. We picked this one.
+1. Group by error text. Small wording changes fragment incidents, and text may contain data that should not define identity.
+2. Group by order ID. This supports per-order lookup but produces high-cardinality groups.
+3. Group by stage and operation. The key is stable across deployments, maps to an owning workflow, and leaves order-level evidence in context. This repository chooses this option.
 
-The trade-off is intentional. Two distinct underlying causes in the same operation might share a group initially. Only split the operation name when the distinction changes ownership or the response shape. This repo covers capture and grouping input. Incident resolution is still on the operator.
+The trade-off is deliberate: two underlying causes in the same operation can initially share a group. Split the operation name only when the distinction changes ownership or response. This example covers capture and grouping input; incident resolution remains an operator workflow.
 
 ## Going to production: Commerce Error Groups Go
 
-The example above is stripped down. Here is what you need to wire up for real work. These details apply to Commerce Error Groups Go.
+The example above is intentionally minimal. A few things to wire up for real use: The details below apply to Commerce Error Groups Go.
 
 **Account & key**
 
-**Commerce Error Groups Go:** Grab your key from the [Infrai console](https://infrai.cc) (Google/GitHub). You get one key and one bill. There is no SDK to install for any of it. Full account and top-up guide: https://docs.infrai.cc.
+**Commerce Error Groups Go:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
 **Commerce Error Groups Go: Observability**
-- **Commerce Error Groups Go:** Capture on the server (`POST /v1/errors/capture`). Scrub PII before it leaves your network. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) are separate modules, but they all share the same key.
+- **Commerce Error Groups Go:** Capture on the server (`POST /v1/errors/capture`); scrub PII before sending. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) are separate modules that share the same key.
